@@ -38,7 +38,11 @@ For this project I've exported the results to `csv`, and the file is available f
 
 # A Brief Introduction to Neo4j and Graph Databases
 
-[Neo4j](https://neo4j.com) is a provider for a particular kind of database called a [graph database]().  A graph database models data through relationships. In the context of NSF Grants we can think of objects, such as people, or institutions or awards, and we can think of their relationships to one another.  For example, the *Person* "Simon Goring" has a relationship with the *Institution* "University of Wisconsin", which is that I "Work For" the University.  Similarly, I have a relationship with *Award* 1541002, in that I am a "Co-PI".  In defining these **node**s, and the **relationships** between them, we can begin to develop a data model for these awards.  
+[Neo4j](https://neo4j.com) is a provider for a particular kind of database called a [graph database](https://en.wikipedia.org/wiki/Graph_database).  A graph database models data through relationships. In the context of NSF Grants we can think of objects, such as people, or institutions or awards, and we can think of their relationships to one another.  For example, the *Person* "Simon Goring" has a relationship with the *Institution* "University of Wisconsin", which is that I "Work For" the University.  Similarly, I have a relationship with *Award* 1541002, in that I am a "Co-PI".  In defining these **node**s, and the **relationships** between them, we can begin to develop a data model for these awards.  
+
+Since we're building in R, I'm using the [`Rneo4j` package](http://www.rdocumentation.org/packages/RNeo4j).  The author of the package, data scientist [Nicole White](https://twitter.com/_nicolemargaret), has some nice [tutorials for using the Rneo4j package](https://neo4j.com/developer/r/).
+
+This document takes some of those basics, adds a (semi) scientific dataset, and (hopefully) provides you with another example for building a graph database with `neo4j`.
 
 # Defining the Model
 
@@ -49,7 +53,7 @@ Once the data is loaded, we need to define a model, and data content for each el
 While the individual nodes are fairly straightforward, we can pull out specific nodes and examine how the information in the awards `csv` file ould fit into them.  This is also the first time we get to look at the data in some detail.  Although the data contains personal information, it is within the public domain.  However, I will focus on the data that directly pertains to myself.
 
 ```{r}
-funded_project <- read.csv('Awards.csv', stringsAsFactors = FALSE)
+funded_project[] <- lapply(read.csv('Awards.csv', stringsAsFactors = FALSE), as.character)
 
 # Find the row that includes my data:
 my_row <- grep("Simon Goring", funded_project$Co.PIName.s.)
@@ -64,7 +68,7 @@ funded_project$Co.PIName.s.[my_row]
 
 To generate a list of all unique individuals, we can write a pretty short script.  This can define both the individual, and also a count of the total grants they are a part of, if you want to use this for visualization.
 
-```{r}
+```{r, results='asis'}
 
 library(dplyr, verbose = FALSE, quietly = TRUE)
 library(purrr, verbose = FALSE, quietly = TRUE)
@@ -76,19 +80,19 @@ people <- c(funded_project$PrincipalInvestigator,
   group_by(name) %>% 
   summarise(count = n())
 
-knitr::kable(people[grep("Simon", people$name),])
+pander::pandoc.table(people[grep("Simon", people$name),], style = "rmarkdown")
 ```
 
 We can do the same thing for Organizations, although this is simplified since NSF provides a single award number per organization:
 
-```{r}
+```{r, results='asis'}
 # Organizations:
 orgs <- funded_project %>% 
   dplyr::select(Organization, OrganizationState, OrganizationCity) %>% 
   group_by(Organization, OrganizationState, OrganizationCity) %>% 
   summarise(count = n())
 
-knitr::kable(head(orgs))
+pander::pandoc.table(head(orgs), style = "rmarkdown")
 ```
 
 The last nodes to be generated are the awards:
@@ -122,6 +126,7 @@ for (i in 1:nrow(grants)) {
   matches <- stringdist(tolower(grants$Title[i]), tolower(grants$Title))
   if (sum(matches < 5) > 1) {
     grants$Title[matches < 5] <- grants$Title[which(matches == getmode(matches[matches < 5]))[1]]
+    funded_project$Title[matches < 5] <- grants$Title[which(matches == getmode(matches[matches < 5]))[1]]
   }
 }
 
@@ -149,7 +154,7 @@ So now, we have the elements, we have the relationship types, and now we need to
 
 checkNode <- function(x, graph, type) {
   node_gr <- getNodes(graph, 
-               paste0("MATCH (t:",type, ") WHERE t.",names(x)[1]," IN ['", x[1], 
+               paste0("MATCH (t:",type, ") WHERE t.",names(x)[1]," IN ['", gsub("'", '"', x[1]), 
                "'] RETURN t"))
   if (is.null(node_gr)) {
     node_gr <- createNode(graph = graph, .label = type, x)
@@ -159,54 +164,112 @@ checkNode <- function(x, graph, type) {
   
 }
 
+checkRel <- function(x, y, type, graph) {
+  rel_check <- getRels(graph, 
+               paste0("MATCH (x:",getLabel(x), ")-[r]-(y:",getLabel(y), ") WHERE x.",
+                      names(x)[1]," IN ['", gsub("'", '"', x[1]), 
+                      "'] AND y.",
+                      names(y)[1]," IN ['", gsub("'", '"', y[1]), 
+                      "'] RETURN r"))
+  if (is.null(rel_check)) {
+    rel_check <- createRel(.fromNode = x, .relType = type, .toNode = y)
+  }
+  
+  return(rel_check)
+}
+
 ```
 
 Now we build all the nodes!
+
 ```{r}
 
 people_nodes <- people %>% by_row(checkNode, graph = ec_graph, type = "Person")
 organization <- orgs   %>% by_row(checkNode, graph = ec_graph, type = "Organization")
 
+subaward_gr    <- grants %>% 
+  select(AwardNumber, AwardedAmountToDate, URL) %>% 
+  by_row(checkNode, graph = ec_graph, "Sub_Award")
+  
+award_gr    <- grants %>% 
+  select(Title, Abstract, StartDate, EndDate) %>% 
+  by_row(checkNode, graph = ec_graph, "Award")
 
-build_nodes <- function(x, graph) {
+```
 
-  row_match <- match(x$AwardNumber, funded_project$AwardNumber)
-  
-  folks <- c(funded_project$PrincipalInvestigator[row_match],
-             funded_project$ProgramManager[row_match],
-             unlist(strsplit(funded_project$Co.PIName.s.[row_match], ', ')))
-  
-  people_gr   <- people[match(folks, people$name),] %>% 
-    purrr::by_row(checkNode, graph = ec_graph, type = "Person")
-  
-  org_gr      <- orgs[match(funded_project$Organization[row_match], orgs$Organization),] %>%
-    purrr::by_row(checkNode, graph = ec_graph, type = "Organization")
-  
-  subaward_gr    <- checkNode(x %>% select(AwardNumber, AwardedAmountToDate, URL), graph, "Sub_Award")
-  
-  award_gr    <- checkNode(x %>% select(Title, Abstract, StartDate, EndDate), graph, "Award")
+In general these steps each take a fairly significant amount of time.  I suspect that some of this is the result of first attempting to check if nodes are duplicates.  Given that we are creating these from scratch it's probably fine to assume they're new and skip the matching.  Having said that, it's nice to be sure that everything is working cleanly from the start.
 
-  # Build the relationships:
-  
-  createRel(.toNode = award_gr, .relType = "Subaward_of", .fromNode = subaward_gr)
+So, once the nodes are build, we go row-wise and build the relationships:
 
+```{r}
+
+for (i in 1:nrow(grants)) {
   
+  # Find out who was funded on that grant:
+  people_gr <- getNodes(ec_graph, 
+                 paste0("MATCH (p:Person) WHERE p.name IN ['", 
+                 paste(gsub("'", ".", unique(c(funded_project$PrincipalInvestigator[row],
+                        strsplit(funded_project$Co.PIName.s.[i], split = ', ')[[1]]))), 
+                       collapse = "','"), 
+                 "'] RETURN p"))
+  
+  # Grant funds go to institutions:
+  org_gr <-  getSingleNode(ec_graph, 
+                      paste0("MATCH (o:Organization) WHERE o.Organization IN ['", 
+                             as.character(unique(funded_project$Organization[i])), 
+                             "'] RETURN o"))
+  
+  award_gr <- getSingleNode(ec_graph, 
+                      paste0('MATCH (a:Award) WHERE a.Title IN ["', 
+                             as.character(funded_project$Title[i]), 
+                             '"] RETURN a'))
+  
+  subaw_gr <- getSingleNode(ec_graph, 
+                            paste0("MATCH (s:Sub_Award) WHERE s.AwardNumber = '", 
+                                   funded_project$AwardNumber[i], 
+                                   "' RETURN s"))
   
   # Funded individuals are based at institutions:
   ## Not sure if I should cut this, it looks like people are associated with multiple
   ## institutions through grants.
   lapply(people_gr, 
-         function(x) { createRel(.fromNode = x, .relType = "Based_In", .toNode = org_gr[[1]]) })
+         function(x) { checkRel(x = x, y = org_gr, type = "Based_At", graph = ec_graph) })
   
-    
+  checkRel(x = subaw_gr, y = org_gr,   type = "Awarded_to",  graph = ec_graph)
+  
+  checkRel(x = subaw_gr, y = award_gr, type = "Subaward_of", graph = ec_graph)
+  
+  # Funded individuals apply for the grants:
+  lapply(people_gr, 
+         function(x) { checkRel(x = x, y = subaw_gr, type = "Applied_for", graph = ec_graph) })
+  
+  # A program officer manages the awards:
+  
+  po_gr <- getSingleNode(ec_graph, 
+                         paste0("MATCH (p:Person) WHERE p.name IN ['",
+                                unique(funded_project$ProgramManager[i]),
+                                "'] RETURN p"))
+
+  checkRel(x = po_gr, y = award_gr, type = "Manages", graph = ec_graph)
+
 }
-
 ```
 
-```r
+This is a pretty ugly way of doing it. There's probably an easier way, but I've run into problems with matching up elements of the `list`s returned by  `getNodes` to the data in the `funded_project` table to the unique node lists.  Ultimately, I went back and just decided to make a big loop.  In some ways (hopefully!) this makes things a bit more transparent if you're just learning how to do this.
 
-createNode(ec_graph, .label = "Grants", as.list(grants[1,]))
+# Checking that things worked
 
-```
+We can take a look at a local network, given that we've built the full graph.  Let's use the cypher query language developed by `neo4j` to take a look a one local network:
+
+```{r}
+
+model <- cypherToList(graph = ec_graph, 
+                  query = paste0('MATCH ptp = (p:Person {name:"Simon Goring"})-[*0..2]-(pp:Person)',
+                                 'RETURN relationships(ptp)'))
+
+model
+
+networkD3forceNetwork()
+
 
 ```
