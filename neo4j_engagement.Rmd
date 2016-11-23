@@ -263,13 +263,60 @@ We can take a look at a local network, given that we've built the full graph.  L
 
 ```{r}
 
-model <- cypherToList(graph = ec_graph, 
+rels <- getRels(graph = ec_graph, 
                   query = paste0('MATCH ptp = (p:Person {name:"Simon Goring"})-[*0..2]-(pp:Person)',
                                  'RETURN relationships(ptp)'))
 
-model
+nodes <- getNodes(graph = ec_graph, 
+                  query = paste0('MATCH ptp = (p:Person {name:"Simon Goring"})-[*0..2]-(pp:Person)',
+                                 'RETURN nodes(ptp)'))
 
-networkD3forceNetwork()
+node_edge <- function(node, edge) {
+ 
+ nodes <- lapply(1:length(node), function(x){
+   data.frame(id   = sapply(node[[x]], function(y) y$metadata$id),
+              type = sapply(node[[x]], function(y) y$metadata$labels[[1]]), 
+              name = sapply(node[[x]], 
+                            function(y) {
+                              if (y$metadata$labels %in% "Person") return(y$data$name)
+                              if (y$metadata$labels %in% "Organization") return(y$data$Organization)
+                              if (y$metadata$labels %in% "Sub_Award")    return(y$data$AwardNumber)
+                              if (y$metadata$labels %in% "Award")    return(y$data$Title)}),
+              count = sapply(node[[x]], function(y) ifelse(y$metadata$labels %in% c("Sub_Award", "Award"), 
+                                                           1, y$data$count)))})
+ 
+ nodes <- node_igraph %>% bind_rows() %>% unique()
+ 
+ edges <- lapply(1:length(rels), function(x) {
+   if (length(rels[[x]]) == 0) return(NULL)
+   data.frame(source = sapply(rels[[x]], function(y) stringr::str_extract(y$start, "[0-9]*$")),
+              target = sapply(rels[[x]], function(y) stringr::str_extract(y$end, "[0-9]*$")))
+ })
+ 
+ edges <- edges %>% bind_rows() %>% unique()
+ 
+ nodes$newID <- seq(0, nrow(nodes) - 1)
+ 
+ edges$newSource <- nodes$newID[match(edges$source, nodes$id)]
+ edges$newTarget <- nodes$newID[match(edges$target, nodes$id)]
+ 
+ edges <- edges[order(edges$newTarget),]
 
+ return(list(nodes = nodes, edges = edges))
+}
 
+summary_graph <- node_edge(nodes, rels)
+
+networkD3::forceNetwork(Links  = summary_graph$edges,
+                        Nodes  = summary_graph$nodes,
+                        Source = "newSource",
+                        Target = "newTarget",
+                        NodeID = "name",
+                        Nodesize = "count",
+                        Group  = "type",
+                        linkWidth = 1,
+                        opacity = 1)
+ 
 ```
+
+So, the process to get the data into `networkD3` isn't super straightforward.  I had to write a little function to break apart the cypher queries.  But regardless, you can now see
