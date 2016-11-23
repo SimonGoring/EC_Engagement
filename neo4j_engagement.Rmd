@@ -208,7 +208,7 @@ for (i in 1:nrow(grants)) {
   # Find out who was funded on that grant:
   people_gr <- getNodes(ec_graph, 
                  paste0("MATCH (p:Person) WHERE p.name IN ['", 
-                 paste(gsub("'", ".", unique(c(funded_project$PrincipalInvestigator[row],
+                 paste(gsub("'", ".", unique(c(funded_project$PrincipalInvestigator[i],
                         strsplit(funded_project$Co.PIName.s.[i], split = ', ')[[1]]))), 
                        collapse = "','"), 
                  "'] RETURN p"))
