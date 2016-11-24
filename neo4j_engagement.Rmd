@@ -43,7 +43,7 @@ For this project I've exported the results to `csv`, and the file is available f
 
 # A Brief Introduction to Neo4j and Graph Databases
 
-[Neo4j](https://neo4j.com) is a provider for a particular kind of database called a [graph database](https://en.wikipedia.org/wiki/Graph_database).  A graph database models data through relationships. In the context of NSF Grants we can think of objects, such as people, or institutions or awards, and we can think of their relationships to one another.  For example, the *Person* "Simon Goring" has a relationship with the *Institution* "University of Wisconsin", which is that I "Work For" the University.  Similarly, I have a relationship with *Award* 1541002, in that I am a "Co-PI".  In defining these **node**s, and the **relationships** between them, we can begin to develop a data model for these awards.  
+[Neo4j](https://neo4j.com) is a provider for a particular kind of database called a [graph database](https://en.wikipedia.org/wiki/Graph_database).  A graph database models data through relationships. In the context of NSF Grants we can think of objects (or *nodes*), such as people, institutions or awards, and we can think of their relationships to one another.  For example, the *Person* "Simon Goring" has a relationship with the *Institution* "University of Wisconsin-Madison", which is that I "Work For" the University.  Similarly, I have a relationship with *Award* 1541002, in that I am a "Co-PI".  In defining these **node**s, and the **relationships** between them, we can begin to develop a data model for these awards.  
 
 Since we're building in R, I'm using the [`Rneo4j` package](http://www.rdocumentation.org/packages/RNeo4j).  The author of the package, data scientist [Nicole White](https://twitter.com/_nicolemargaret), has some nice [tutorials for using the Rneo4j package](https://neo4j.com/developer/r/).
 
@@ -278,7 +278,7 @@ This is a pretty ugly way of doing it. There's probably an easier way, but I've 
 
 We can take a look at a local network, given that we've built the full graph.  Let's use the cypher query language developed by `neo4j` to take a look a one local network:
 
-```{r, fig.height=3, fig.width=3, warning=FALSE, results="hide", message=FALSE}
+```{r, warning=FALSE, results="hide", message=FALSE}
 
 rels <- getRels(graph = ec_graph, 
                   query = paste0('MATCH ptp = (p:Person {name:"Simon Goring"})-[*0..2]-(pp:Person)',
@@ -325,7 +325,9 @@ node_edge <- function(node, edge) {
 summary_graph <- node_edge(nodes, rels)
 
 summary_graph$nodes$type[which(summary_graph$nodes$name == "Simon Goring")] <- "Me"
+```
 
+```{r}
 networkD3::forceNetwork(Links  = summary_graph$edges,
                         Nodes  = summary_graph$nodes,
                         Source = "newSource",
@@ -336,8 +338,6 @@ networkD3::forceNetwork(Links  = summary_graph$edges,
                         linkWidth = 1,
                         opacity = 1,
                         zoom = TRUE,
-                        height = 400,
-                        width = 400,
                         legend = TRUE)
  
 ```
@@ -381,7 +381,7 @@ plot(dist ~ n, data = avg_dist, pch = 19, col = ifelse(avg_dist$start == "Univer
 
 # One Last Pretty Graph
 
-```{r}
+```{r, results="as-is"}
 
 rels <- getRels(graph = ec_graph, 
                   query = paste0('MATCH ptp = (p:Person {name:"Simon Goring"})-[*0..5]-(pp:Person)',
@@ -394,7 +394,9 @@ nodes <- getNodes(graph = ec_graph,
 summary_graph <- node_edge(nodes, rels)
 
 summary_graph$nodes$type[which(summary_graph$nodes$name == "Simon Goring")] <- "Me"
+```
 
+```{r}
 networkD3::forceNetwork(Links  = summary_graph$edges,
                         Nodes  = summary_graph$nodes,
                         Source = "newSource",
@@ -405,8 +407,6 @@ networkD3::forceNetwork(Links  = summary_graph$edges,
                         linkWidth = 1,
                         opacity = 1,
                         zoom = TRUE,
-                        height = 600,
-                        width = 700,
                         legend = TRUE)
 
 
