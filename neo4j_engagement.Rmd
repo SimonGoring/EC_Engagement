@@ -4,6 +4,7 @@ author: "Simon Goring"
 date: "November 17, 2016"
 output:
   html_document:
+    keep_md: true
     code_folding: show
     highlight: pygment
     number_sections: yes
@@ -20,7 +21,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Using Neo4j to Explore NSF EarthCube Awards
 
-EarthCube is a set of funded projects, supported by NSF's Geosciences directorate and the Division of Advanced Cyberinfrastructure.  
+[EarthCube](http://earthcube.org) is a set of funded projects, supported by NSF's Geosciences directorate and the Division of Advanced Cyberinfrastructure.  EarthCube is defined as *"a community effort to promote interdisciplinary geoscience by enabling technology, organization, and culture that facilitates connectivity through standards and protocols to existing and emerging resources."*, so I thought I would take the opportunity to leverage a few emerging technologies to look at connectivity across the organization.
 
 # Obtaining the data
 
@@ -52,15 +53,19 @@ Once the data is loaded, we need to define a model, and data content for each el
 
 While the individual nodes are fairly straightforward, we can pull out specific nodes and examine how the information in the awards `csv` file ould fit into them.  This is also the first time we get to look at the data in some detail.  Although the data contains personal information, it is within the public domain.  However, I will focus on the data that directly pertains to myself.
 
-```{r}
-funded_project[] <- lapply(read.csv('Awards.csv', stringsAsFactors = FALSE), as.character)
+```{r, message=FALSE, warning=FALSE,results='hide'}
+
+library(dplyr, verbose = FALSE, quietly = TRUE)
+library(purrr, verbose = FALSE, quietly = TRUE)
+
+funded_project <- read.csv('Awards.csv', stringsAsFactors = FALSE) %>% mutate_all(as.character)
 
 # Find the row that includes my data:
 my_row <- grep("Simon Goring", funded_project$Co.PIName.s.)
 
 ```
 
-The raw data has `r ncol(funded_project)` columns.  Of these, `ProgramManager`, `PrincipalInvestigator`, and `CO.PIName.s.` are the named fields.  The NSF data does not contain a significant amount of data, although it does include an email address for the lead PI at each institution.  For the sake of this exercise we'll ignore that.  To clean the names we need to recognize that the `CO.PIName.s.` may be comma separated:
+The raw data has `r ncol(funded_project)` columns.  Of these, `ProgramManager`, `PrincipalInvestigator`, and `CO.PIName.s.` are the named fields (this is the annoying R behaviour of switching in periods).  The NSF report does not contain a significant amount of data, although it does include an email address for the lead PI at each institution.  For the sake of this exercise we'll ignore that.  To clean the names we need to recognize that the `CO.PIName.s.` may be comma separated:
 
 ```{r}
 funded_project$Co.PIName.s.[my_row]
@@ -70,9 +75,6 @@ To generate a list of all unique individuals, we can write a pretty short script
 
 ```{r, results='asis'}
 
-library(dplyr, verbose = FALSE, quietly = TRUE)
-library(purrr, verbose = FALSE, quietly = TRUE)
-
 people <- c(funded_project$PrincipalInvestigator, 
             funded_project$ProgramManager,
             unlist(strsplit(funded_project$Co.PIName.s., ', '))) %>% 
@@ -80,7 +82,7 @@ people <- c(funded_project$PrincipalInvestigator,
   group_by(name) %>% 
   summarise(count = n())
 
-pander::pandoc.table(people[grep("Simon", people$name),], style = "rmarkdown")
+knitr::kable(people[grep("Simon", people$name),])
 ```
 
 We can do the same thing for Organizations, although this is simplified since NSF provides a single award number per organization:
@@ -92,7 +94,7 @@ orgs <- funded_project %>%
   group_by(Organization, OrganizationState, OrganizationCity) %>% 
   summarise(count = n())
 
-pander::pandoc.table(head(orgs), style = "rmarkdown")
+knitr::kable(head(orgs))
 ```
 
 The last nodes to be generated are the awards:
@@ -261,7 +263,7 @@ This is a pretty ugly way of doing it. There's probably an easier way, but I've 
 
 We can take a look at a local network, given that we've built the full graph.  Let's use the cypher query language developed by `neo4j` to take a look a one local network:
 
-```{r}
+```{r, fig.height=3, fig.width=3, warning=FALSE, results="hide", message=FALSE}
 
 rels <- getRels(graph = ec_graph, 
                   query = paste0('MATCH ptp = (p:Person {name:"Simon Goring"})-[*0..2]-(pp:Person)',
@@ -285,12 +287,12 @@ node_edge <- function(node, edge) {
               count = sapply(node[[x]], function(y) ifelse(y$metadata$labels %in% c("Sub_Award", "Award"), 
                                                            1, y$data$count)))})
  
- nodes <- node_igraph %>% bind_rows() %>% unique()
+ nodes <- nodes %>% bind_rows() %>% unique()
  
- edges <- lapply(1:length(rels), function(x) {
-   if (length(rels[[x]]) == 0) return(NULL)
-   data.frame(source = sapply(rels[[x]], function(y) stringr::str_extract(y$start, "[0-9]*$")),
-              target = sapply(rels[[x]], function(y) stringr::str_extract(y$end, "[0-9]*$")))
+ edges <- lapply(1:length(edge), function(x) {
+   if (length(edge[[x]]) == 0) return(NULL)
+   data.frame(source = sapply(edge[[x]], function(y) stringr::str_extract(y$start, "[0-9]*$")),
+              target = sapply(edge[[x]], function(y) stringr::str_extract(y$end, "[0-9]*$")))
  })
  
  edges <- edges %>% bind_rows() %>% unique()
@@ -307,6 +309,8 @@ node_edge <- function(node, edge) {
 
 summary_graph <- node_edge(nodes, rels)
 
+summary_graph$nodes$type[which(summary_graph$nodes$name == "Simon Goring")] <- "Me"
+
 networkD3::forceNetwork(Links  = summary_graph$edges,
                         Nodes  = summary_graph$nodes,
                         Source = "newSource",
@@ -315,8 +319,55 @@ networkD3::forceNetwork(Links  = summary_graph$edges,
                         Nodesize = "count",
                         Group  = "type",
                         linkWidth = 1,
-                        opacity = 1)
+                        opacity = 1,
+                        zoom = TRUE,
+                        height = 400,
+                        width = 400,
+                        legend = TRUE)
  
 ```
 
-So, the process to get the data into `networkD3` isn't super straightforward.  I had to write a little function to break apart the cypher queries.  But regardless, you can now see
+So, the process to get the data into `networkD3` isn't super straightforward.  I had to write a little function to break apart the cypher queries.  But regardless, you can now see my local network. Other cypher queries could be used to generate other patterns.  For example, we could find out how close organizations are to one another.
+
+# Institutional Proximity
+
+To understand how tightly insitutions are connected through EarthCube grants we have to construct a cypher query that checks distances across the network.  We pair `Organization`s, ensuring that the start (`o1`) and end (`o2`) organizations are not the same.  I added the extra constraint for the path that it not pass through an NSF Program officer.  This is why we use the `NONE` and `type(rels)='Manages` constraint.  A program officer is a `Person`, so we can't eliminate them on that basis (and it makes sense they are a `Person` since Program Officers come from academia, and so theoretically could also apply for grants).
+
+We search for paths up to 9 steps in length (`[*..9]`), obtaining the shortest path in each case (we could use `allShortestPaths` if we wanted multiple options, but here we just care about the end points and their length).
+
+```{r}
+
+path_dist <- cypher(graph = ec_graph, query = "MATCH (o:Organization)
+  WITH collect(ID(o)) AS orgs
+  MATCH (o1:Organization), (o2:Organization)
+  MATCH path=shortestPath((o1)-[*..9]-(o2))
+  WHERE ID(o1) IN orgs AND ID(o2) IN orgs AND o1 <> o2
+  AND NONE(rel in rels(path) WHERE type(rel)='Manages')
+  RETURN o1.Organization AS start, o2.Organization AS end, length(path) AS steps")
+
+avg_dist <- path_dist %>% 
+  group_by(start) %>% 
+  summarise(dist = mean(steps), n = n()) %>% 
+  arrange(dist) %>% filter(n > 10)
+
+knitr::kable(head(avg_dist, n = 10))
+
+```
+
+I'm just showing the ten institutions with the closest paths to other institutions.  I'm happy to report that UW-Madison is one of them!
+
+Given a bit of knowedge about EarthCube and the funded projects, it makes sense that many of these universities and institutions are at the top of the list.  The average distance between institutions is about 7 steps, with `r sum(!unique(funded_project$Organization) %in% avg_dist$start)` institutions failing to find close neighbors within 9 steps. In general this is because the organization only ever participated in single-institution proposals with EarthCube, and the PIs were not involved in other EarthCube proposals.  An additional wrinkle is that the proposals examined here contained the term "EarthCube" anywhere within the data, including in the abstract.  It's possible that unrelated projects that referred to standards coming out of EarthCube could have been counted here.  Regardless, that's more a statement about the impact of the EarthCube program than anything else.
+
+Mean path length is tightly coupled to the number of institutions an institution is connected to.  This makes sense intuitively, but the relationship has an interesting sharp downward curve:
+
+```{r, fig.width=4, fig.height=4}
+plot(dist ~ n, data = avg_dist, pch = 19, col = ifelse(avg_dist$start == "University of Wisconsin-Madison", 2, 4))
+```
+
+# Conclusions
+
+This is my first real deep-dive into using `neo4j`, but it was pretty fun.  I didn't show you the user interface, but the browser is nice and clean, and relatively easy to use.  I crashed Chrome a few times while testing out some of my cypher queries, but re-connecting to the database was super simple.
+
+I feel like either I need to get more comfortable with the `RNeo4j` tools, or the package could use some more helper functions.  Better integration with packages like `networkD3` or `igraph` would be fantastic.  That said, take a look at my hacky code and let me know where I can improve.
+
+You're welcome to fork, make pull requests or otherwise tinker with the code in my [EC_Engagement GitHub repository](https://github.com/SimonGoring/EC_Engagement).
